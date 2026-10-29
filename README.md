@@ -1,199 +1,210 @@
-# IdlixDownloader v2
+# idlixdownloader2
 
-Video downloader for [IDLIX](https://z2.idlixku.com) with automated network capture and parallel segment downloading.
+A fast, browser-free downloader for [IDLIX](https://z2.idlixku.com). Search for a movie or series, pick seasons and episodes with a keyboard-driven TUI, choose quality and subtitles, and get a ready-to-play MKV.
+
+No URL hunting, no page rendering, and no browser process.
 
 ## Features
 
-- **Automated Network Capture** - Playwright-based browser automation with stealth techniques to bypass Cloudflare challenges
-- **Smart Interaction** - Auto-detects and clicks play buttons, handles popup ads, and automatically skips pre-roll advertisements
-- **Early Exit Optimization** - Polls for config URLs and exits early instead of waiting fixed timeouts (reduces capture time from 60s to ~10-20s)
-- **Resume Download Capability** - Saves quality (bandwidth), subtitle choice, and segment progress; resumes interrupted downloads
-- **Smart Resume Mode** - Auto-detects previous downloads and offers to continue with saved settings or start fresh
-- **Quality Matching by Bandwidth** - Resume matches the selected stream by bandwidth (works when MajorPlay omits `RESOLUTION=` and only reports kbps)
-- **Language Detection** - Parses subtitle language from playlist metadata or `/i18n/<code>/` URL paths when available
-- **JWT Token Resilience** - Resume works even after JWT token expires (~55 minutes) by matching subtitles by base URL
-- **Parallel Downloading** - Multi-threaded segment download (5 workers) with automatic retry logic (3 attempts per segment)
-- **Interactive Selection** - Prompts for quality and subtitle preferences during download
-- **Proper fMP4 Assembly** - Handles init segments correctly for fragmented MP4 concatenation
-- **Subtitle Support** - Auto-detects and embeds subtitles into MKV output
+- **One consistent TUI** — search, season/episode pickers, quality/subtitle prompts, progress, and process logs all live in the same Textual app.
+- **Search-first TUI** — run the command, type a title, and results appear after a 350 ms debounce.
+- **Multi-select** — use `Space` to toggle seasons/episodes and `a` to select all. Download one episode, a full season, or several seasons in one run.
+- **Browser-free** — playback is resolved through IDLIX's HTTP API, not by opening a page.
+- **Quality and subtitle pickers** — arrow-key menus with bandwidth-aware quality selection and correct ISO 639-2 subtitle tags (`eng`/`ind`).
+- **Batch downloads** — quality and subtitle choices are asked once and reused for the rest of the batch.
+- **Live progress** — a progress bar for video/audio segments, live download logs, and an FFmpeg status line.
+- **Resume support** — interrupted downloads keep segment progress and saved quality/subtitle preferences.
+- **Parallel fetching** — five segment workers with automatic retries and JWT-aware URL handling.
+- **Clean output** — fMP4 fragments are assembled correctly and muxed to a single MKV.
 
-## Prerequisites
+## Requirements
 
-- **Python** ≥ 3.13
-- **uv** package manager ([installation guide](https://docs.astral.sh/uv/))
-- **FFmpeg** installed and available in PATH ([download](https://ffmpeg.org/download.html))
-- **Chromium** browser (installed via Playwright)
+- **Python 3.13+**
+- **[uv](https://docs.astral.sh/uv/)**
+- **FFmpeg** available on `PATH` — verify with `ffmpeg -version`
+
+> [!IMPORTANT]
+> FFmpeg is required for the final mux. The downloader handles the HLS/fMP4 part itself.
+
+No browser is required.
 
 ## Installation
 
 ```bash
-# Clone the repository
-git clone https://github.com/mohfer/idlixdownloader-v2.git
-
-# Navigate into the project directory
-cd idlixdownloader-v2
-
-# Install dependencies with uv
+git clone https://github.com/mohfer/idlixdownloader2.git
+cd idlixdownloader2
 uv sync
-
-# Install Playwright browser (one-time setup)
-uv run playwright install chromium
 ```
 
 ## Usage
 
-### Auto Mode (Recommended)
-
-Automatically captures network traffic and extracts streaming URLs:
+### Search and download
 
 ```bash
-uv run idlix "https://z2.idlixku.com/movie/toy-story-5-2026"
+uv run idlixdownloader2
 ```
 
-**What happens:**
-1. Launches visible browser window
-2. Navigates to the video page
-3. Clicks play button automatically
-4. Closes popup ad tabs if they appear
-5. Tool automatically clicks Skip Ad button after 8 seconds (if detected)
-6. Captures network traffic (~70 seconds or until config URL found)
-7. Extracts config and subtitle URLs from captured requests
-8. Prompts for quality selection (defaults to highest bandwidth)
-9. Prompts for subtitle inclusion (defaults to yes)
-10. Downloads all segments in parallel (time varies by connection speed and server load)
-11. Outputs: `output/Movie Title/Movie Title.mkv` with embedded subtitles
+Then:
 
-### Manual Mode
+1. Type a movie or series title. Results appear automatically after you stop typing.
+2. Press `Down` to enter the results, then `Enter` to open one.
+3. For a series, select one or more seasons with `Space` (`a` selects all), press `Enter`, then select episodes the same way.
+4. Pick quality and subtitle.
+5. Watch the progress bar and live logs; the final MKV is written to `output/`.
 
-Use when you already have the config URL from a previous capture:
+All prompts stay inside the TUI. There is no switch back to plain terminal output during an interactive session.
+
+### Keyboard controls
+
+| Key | Action |
+| --- | --- |
+| `Up` / `Down` | Move between items |
+| `Space` | Toggle a season/episode |
+| `a` | Select all items in the current list |
+| `Enter` | Confirm / open |
+| `Esc` / `Left` | Go back one screen |
+
+Going back from the episode list returns to the season list. Going back from the season list returns to search.
+
+### URL mode
+
+You can skip search and pass a page URL directly:
 
 ```bash
-uv run idlix "https://z2.idlixku.com/movie/..." "https://e2e.majorplay.net/.../config.json?t=JWT_TOKEN"
+# Movie
+uv run idlixdownloader2 "https://z2.idlixku.com/movie/toy-story-5-2026"
+
+# Specific episode
+uv run idlixdownloader2 "https://z2.idlixku.com/series/oh-my-guard-2026/season/1/episode/1"
 ```
 
-This skips the browser automation step and goes directly to downloading.
+For a parent series URL, the TUI opens the season/episode pickers. Skip the menus with explicit flags:
 
-### Quality selection
-
-MajorPlay master playlists sometimes include resolution, sometimes only bandwidth:
-
-```
-Available qualities:
-1. 1920x1080 (5836 kbps)
-2. 1280x720 (2694 kbps)
+```bash
+uv run idlixdownloader2 "https://z2.idlixku.com/series/oh-my-guard-2026" --season 1 --episode 2
 ```
 
-or:
+### Manual config URL
 
-```
-Available qualities:
-1. 700 kbps
-2. 3500 kbps
-3. 5800 kbps
-```
+If you already have a MajorPlay config URL, pass it as the second argument to skip API resolution:
 
-Enter (empty) always picks the **highest bandwidth**, not necessarily list item 1.
-
-### Resume Download
-
-If a download is interrupted, the tool automatically detects the previous download and offers to resume:
-
-```
-[!] Previous download found:
-   Quality: 5800 kbps
-   Subtitle: Subtitle
-   Segments: 358 files
-
-   Continue previous download? (Y/n):
+```bash
+uv run idlixdownloader2 "https://z2.idlixku.com/movie/..." "https://e2e.majorplay.net/.../config.json?t=JWT_TOKEN"
 ```
 
-**Continue (Y)**: Resumes with saved settings (quality + subtitle), skips already-downloaded segments
+### Resume an interrupted download
 
-**Fresh (n)**: Deletes old segments and metadata, starts a fresh download with new selections
+Re-run the same command. If `output/<title>/download_state.json` and segments exist, the tool offers:
 
-**Notes:**
-- Resume matches quality by **bandwidth** (not the display string alone). This avoids mixing streams when several variants are labeled without resolution.
-- Resume works even if JWT tokens have expired (>55 minutes): a new capture refreshes tokens while subtitle prefs match by base URL.
-- Older state files that only stored `resolution: "unknown"` (no bandwidth) cannot safely auto-match — choose **Fresh**, or re-select quality when prompted.
+- **Lanjutkan** — reuse the saved quality/subtitle and skip completed segments.
+- **Mulai baru** — delete old segments and start fresh.
 
-## How It Works
+Resume matches quality by **bandwidth**, so it still works when MajorPlay omits `RESOLUTION=` and only reports kbps.
 
-MajorPlay uses standard HLS (HTTP Live Streaming) protocol with obfuscation techniques:
+## How it works
 
-- **Config Disguise** - M3U8 master playlists disguised as `.json` files
-- **Segment Disguise** - fMP4 video segments disguised as common file types (`.js`, `.png`, `.jpg`, `.css`, `.svg`, `.html`)
-- **Multi-CDN Distribution** - Content distributed across 6+ CDN domains
-- **JWT Authentication** - Time-limited tokens (~55 minute expiration) passed as query parameters
-- **Pre-roll VAST Ads** - Standard video ad format that must be skipped before content plays
+### Search
 
-### Download Process
+The search screen calls:
 
-1. **Network Capture** - Browser automation captures all network requests during video playback
-2. **URL Extraction** - Parses captured requests to find config URL (master playlist) and subtitle URLs
-3. **Playlist Parsing** - Extracts video/audio variant playlists and segments from M3U8 master playlist
-4. **Parallel Download** - Downloads init segment + all fMP4 fragments concurrently (5 workers with retry logic)
-5. **Binary Concatenation** - Assembles complete video: `init_segment + frag1 + frag2 + ... = complete.mp4`
-6. **FFmpeg Muxing** - Combines video + audio + subtitle into final MKV container
-
-## Project Structure
-
+```text
+GET /api/search?q=<query>
 ```
-idlixdownloader-v2/
-├── src/
-│   └── idlixdownloader/
-│       ├── __init__.py           # Package initialization
-│       ├── __main__.py           # CLI entry point
-│       └── downloader.py         # Network capture + download + FFmpeg mux
+
+Results include `contentType` and `slug`. Selecting a result builds `/movie/<slug>` or `/series/<slug>` and continues to the pickers.
+
+### Playback resolution
+
+IDLIX's player resolves a stream in four HTTP calls:
+
+1. `GET /api/movies/<slug>` or `/api/series/<slug>/season/<s>/episode/<e>` — content id
+2. `GET /api/watch/play-info/<type>/<id>` — gate token and unlock time
+3. Wait for the server-side gate (~15 seconds)
+4. `POST /api/watch/session/claim` — exchange the gate token for a playback claim
+5. `POST <redeemUrl>` — get the MajorPlay master playlist and subtitle tracks
+
+> [!NOTE]
+> The ~15 second gate is enforced by the server. Claiming earlier returns `kind: "pending"` with `remainingMs`; the resolver waits and retries automatically.
+
+> [!WARNING]
+> This tool does not solve Cloudflare Turnstile. If the API asks for verification, that title cannot be downloaded and the command stops.
+
+### Download and mux
+
+1. Parse the disguised M3U8 master playlist.
+2. Pick a video variant by bandwidth, plus the audio track and subtitles.
+3. Download the init segment and all fMP4 fragments in parallel (5 workers, 3 attempts per segment).
+4. Concatenate `init + fragments` into a complete MP4.
+5. Mux video, audio, and subtitle into `output/<title>/<title>.mkv`.
+
+The JWT token from the master playlist is appended to variant and segment URLs. Subtitle URLs work without it.
+
+## Project structure
+
+```text
+idlixdownloader2/
+├── src/idlixdownloader2/
+│   ├── __init__.py
+│   ├── __main__.py        # CLI entry point
+│   ├── downloader.py      # pipeline, resume, progress, FFmpeg mux
+│   ├── resolver.py        # search + HTTP API resolver
+│   └── tui.py             # Textual app/screens + console fallback
 ├── tests/
-│   └── test_downloader.py        # Unit tests
-├── output/                       # Downloaded videos (gitignored)
-├── pyproject.toml                # uv project configuration
-└── README.md                     # This file
+│   ├── test_downloader.py
+│   └── test_resolver.py
+├── output/                # downloads (gitignored)
+├── pyproject.toml
+└── uv.lock
 ```
 
 ## Troubleshooting
 
-**Config URL not found**
-- Make sure to skip the ad after 8 seconds
-- Video must play past the ad for config requests to be captured
-- Check browser console for errors
+**Search shows no results**
 
-**Segments fail to download**
-- Network issues are handled automatically (3 retry attempts per segment)
-- If many segments fail, check your internet connection
-- Temporary CDN issues may resolve with a retry
+- Wait for the debounce to finish, or check your connection.
+- Try a shorter query (at least 2 characters).
+- If the API is unavailable, use URL mode as a workaround.
 
-**JWT token expired**
-- Tokens last approximately 55 minutes
-- If download takes longer, capture again to get a fresh token
-- Manual mode will fail with expired tokens
+**Resolution fails**
 
-**Resume picked a different quality / segment count changed**
-- Different qualities have different segment counts — that is normal
-- Resume must match the same bandwidth; if state is incomplete (`unknown` without bandwidth), use Fresh
-- Do not continue a partial download after a wrong-quality resume; start Fresh
+- Transient API/CDN failures are retried automatically; run again first.
+- A `TurnstileRequired` error means the API wants browser verification, which this tool intentionally does not handle.
+- Check that the title still exists on IDLIX.
+
+**Claim stays `pending`**
+
+- The gate is server-enforced. The resolver waits automatically.
+- Persistent `pending` usually means clock skew; retry, or sync your system time.
+
+**Connection reset while downloading**
+
+- Connection resets and HTTP 5xx responses are retried (3 attempts).
+- Re-run the command; completed segments are skipped.
+
+**Segments fail repeatedly**
+
+- Check your connection and retry.
+- If the CDN is flaky, wait a few minutes.
+- A fresh resolution gets a new JWT when the old one expires.
+
+**Subtitle track has the wrong language label**
+
+- The MKV track is tagged from the selected subtitle (`eng` or `ind`), not hardcoded.
+- For files downloaded by an older version, remux without re-downloading:
+
+```bash
+ffmpeg -i old.mkv -map 0 -c copy \
+  -metadata:s:s:0 language=eng \
+  -metadata:s:s:0 title=English \
+  -y fixed.mkv
+```
 
 **FFmpeg not found**
-- Install FFmpeg and ensure it's in your system PATH
-- Test with: `ffmpeg -version`
-- Windows: Add FFmpeg bin directory to PATH environment variable
 
-**Browser automation fails**
-- Ensure Playwright Chromium is installed: `uv run playwright install chromium`
-- Some networks/firewalls may block browser automation
-- Try running with visible browser (default) to see what's happening
+- Install FFmpeg and add its `bin` directory to `PATH`.
+- Verify with `ffmpeg -version`.
 
-**Cloudflare challenge blocks access**
-- The tool implements stealth techniques (user agent spoofing, webdriver flag removal)
-- If still blocked, the site may have updated its detection
-- Visible browser mode (default) is more reliable than headless
+**Resume picked a different quality**
 
-## Requirements
-
-Documented in `pyproject.toml`:
-- `cloudscraper>=1.2.71` - HTTP client with Cloudflare bypass capabilities
-- `playwright>=1.40.0` - Browser automation framework
-
-## License
-
-MIT License. See LICENSE file for details.
+- Different qualities have different segment counts; that is normal.
+- If the saved quality is unavailable or ambiguous, choose **Mulai baru**.
