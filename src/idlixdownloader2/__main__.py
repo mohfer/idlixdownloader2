@@ -1,4 +1,4 @@
-"""CLI entry point for idlixdownloader"""
+"""CLI entry point for idlixdownloader2"""
 
 import sys
 from .downloader import main
